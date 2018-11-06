@@ -1,0 +1,150 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Route53 Stack'
+Metadata:
+    Stack: 1
+    VersionDate: "2017-12-10"
+    Input:
+      Description: "Route53 Stack"
+    Output:
+      Description: "Outputs Ids for all the created resources"
+    "AWS::CloudFormation::Interface":
+        ParameterGroups:
+            - Label:
+                default: Resource Prefix
+              Parameters:
+              - Environment
+            - Label:
+                default: HostedZoneName
+              Parameters:
+                - PrivateHostedZoneNameSuffix
+                - PublicHostedZoneNameSuffix
+                - SetDHCPOptions
+                - BindDnsServer0
+                - BindDnsServer1
+              
+Parameters:
+  PrivateHostedZoneNameSuffix:
+    Type: String
+    Description: "Suffix of the domain Name for the Private hosted zone in Route53.Leave empty if private hosted zone need not be created."
+  PublicHostedZoneNameSuffix:
+    Type: String
+    Description: "Suffix of the domain name for the Public hosted zone in Route53. Leave empty if private hosted zone need not be created."
+  Environment:
+    Type: String
+    Description: 'Prefix used for naming the resources created in the stack with the format ${Environment}-<resource> i.e if it was set to svc then the resources would have a name svc-resource. If empty it will create a public zone'
+    ConstraintDescription: 'Must contain only lower case letters and minimum string length is 2.'
+  BindDnsServer0:
+    Description: Bind DNS Server0 IP. Leave empty if you want to use the AmazonProvidedDNS
+    Type: String
+    Default: "10.68.10.10"
+  BindDnsServer1:
+    Description: Bind DNS Server1 IP. Leave empty if you want to use the AmazonProvidedDNS
+    Type: String
+    Default: "10.68.11.10"
+  SetDHCPOptions:
+    Type: String
+    Description: 'Whether to create DhcpOptions and assign to VPC'
+    Default: true
+    AllowedValues: [true, false]
+
+Conditions:
+  CreatePrivateZone: !Not [!Equals [ '', !Ref PrivateHostedZoneNameSuffix ]]
+  CreatePublicZone: !Not [!Equals [ '', !Ref PublicHostedZoneNameSuffix ]]
+  CreateDHCPOptions:  !And
+    - !Not [!Equals [ '', !Ref Environment ]]
+    - !Equals [ true , !Ref SetDHCPOptions]
+    - !Equals [ '', !Ref BindDnsServer0 ]
+    - !Equals [ '', !Ref BindDnsServer1 ]
+  BindServers: !And
+    - !Not [!Equals [ '', !Ref Environment ]]
+    - !Equals [ true , !Ref SetDHCPOptions]
+    - !Not [!Equals [ '', !Ref BindDnsServer0 ]]
+    - !Not [!Equals [ '', !Ref BindDnsServer1 ]]
+
+Resources:
+  PrivateHostedZone:
+    Condition: CreatePrivateZone
+    Type: AWS::Route53::HostedZone
+    Properties:
+      HostedZoneConfig:
+        Comment: Private Hosted Zone created through cloudformation
+      Name: !Ref PrivateHostedZoneNameSuffix
+      VPCs:
+        -
+          VPCId:
+            !ImportValue
+              Fn::Sub: ${Environment}-VpcId
+          VPCRegion: !Ref "AWS::Region"
+
+  PublicHostedZone:
+    Condition: CreatePublicZone
+    Type: AWS::Route53::HostedZone
+    Properties:
+      HostedZoneConfig:
+        Comment: Public Hosted Zone created through cloudformation
+      Name: !Ref PublicHostedZoneNameSuffix
+
+###############DHCP Option Set#########################
+  DhcpOptionsBind:
+    Condition: BindServers
+    Type: AWS::EC2::DHCPOptions
+    Properties:
+      DomainName: !Ref PrivateHostedZoneNameSuffix
+      DomainNameServers:
+        - !Ref BindDnsServer0
+        - !Ref BindDnsServer1
+  DhcpOptionsAmazon:
+    Condition: CreateDHCPOptions
+    Type: AWS::EC2::DHCPOptions
+    Properties:
+      DomainNameServers:
+        - AmazonProvidedDNS
+      DomainName: !Ref PrivateHostedZoneNameSuffix
+
+  DhcpOptionsAssociationAmazon:
+    Condition: CreateDHCPOptions
+    Type: AWS::EC2::VPCDHCPOptionsAssociation
+    Properties:
+      VpcId:
+        !ImportValue
+          Fn::Sub: ${Environment}-VpcId
+      DhcpOptionsId: !Ref DhcpOptionsAmazon
+
+  DhcpOptionsAssociationBind:
+    Condition: BindServers
+    Type: AWS::EC2::VPCDHCPOptionsAssociation
+    Properties:
+      VpcId:
+        !ImportValue
+          Fn::Sub: ${Environment}-VpcId
+      DhcpOptionsId: !Ref DhcpOptionsBind
+
+Outputs:
+  PrivateHostedZone:
+    Condition: CreatePrivateZone
+    Value: !Ref PrivateHostedZone
+    Export:
+      Name:
+        !Sub ${Environment}-PrivateHostedZoneId
+    Description: Private Hosted Zone ID
+  PrivateHostedZoneName:
+    Condition: CreatePrivateZone
+    Value: !Ref PrivateHostedZoneNameSuffix
+    Export:
+      Name:
+        !Sub ${Environment}-PrivateHostedZoneName
+    Description: Private Hosted Zone Name
+  PublicHostedZone:
+    Condition: CreatePublicZone
+    Value: !Ref PublicHostedZone
+    Export:
+      Name:
+        !Sub ${Environment}-PublicHostedZoneId
+    Description: Public Hosted Zone Id
+  PublicHostedZoneName:
+    Condition: CreatePublicZone
+    Value: !Ref PublicHostedZoneNameSuffix
+    Export:
+      Name:
+        !Sub ${Environment}-PublicHostedZoneName
+    Description: Public Hosted Zone Name
